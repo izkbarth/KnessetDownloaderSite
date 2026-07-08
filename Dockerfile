@@ -6,7 +6,7 @@ WORKDIR /usr/src/app
 
 # העתקת קבצי ההגדרות והתקנת הספריות
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # העתקת שאר קבצי הקוד של האתר (index.html, server.js)
 COPY . .
