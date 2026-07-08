@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>קנאק - מוריד מסמכי כנסת</title>
+    <title>KnessetDownloader</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; line-height: 1.6; }
         input[type="text"] { width: 80%; padding: 10px; font-size: 16px; margin: 20px 0; border: 1px solid #ccc; border-radius: 4px; text-align: left; dir: ltr; }
@@ -12,8 +12,9 @@
     </style>
 </head>
 <body>
-    <h2>קנאק - מוריד מסמכי כנסת ומאגר החקיקה</h2>
-    <p>הדבק את כתובת עמוד החוק ממאגר החקיקה הלאומי ולחץ על הכפתור כדי להוריד קובץ ZIP מסודר.</p>
+    <h2>KnessetDownloader
+    <br>הורדת מסמכי החוק ממאגר החקיקה הלאומי</h2>
+    <p>הדבק את כתובת עמוד החוק במאגר החקיקה הלאומי ולחץ על הכפתור כדי להוריד קובץ ZIP מסודר.</p>
     
     <input type="text" id="billUrl" placeholder="https://main.knesset.gov.il/apps/legislation/main/bills/...">
     <br>
@@ -32,22 +33,19 @@
             }
 
             btn.disabled = true;
-            statusDiv.innerText = "השרת סורק את עמוד הכנסת ומכין את ה-ZIP. זה עשוי לקחת חצי דקה...";
+            statusDiv.innerText = "השרת סורק את עמוד הכנסת ומכין את קובץ ה-ZIP. זה עשוי לקחת חצי דקה...";
 
             try {
-                // פנייה לשרת שלנו ומעבר הלינק בפרמטר
                 const response = await fetch(`/download?url=${encodeURIComponent(urlInput)}`);
                 
                 if (!response.ok) throw new Error("השרת נתקל בשגיאה בעיבוד העמוד");
 
-                // קבלת שם הקובץ מתוך ה-Headers של התגובה
                 const disposition = response.headers.get('Content-Disposition');
                 let filename = "מסמכי_כנסת.zip";
                 if (disposition && disposition.indexOf('filename=') !== -1) {
                     filename = decodeURIComponent(disposition.split('filename=')[1].replace(/"/g, ''));
                 }
 
-                // הורדת הבלוב של ה-ZIP למחשב המשתמש
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');

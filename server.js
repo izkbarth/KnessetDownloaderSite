@@ -1,153 +1,216 @@
 const express = require('express');
-const axios = require('axios');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const cheerio = require('cheerio');
 const JSZip = require('jszip');
+const axios = require('axios');
 const path = require('path');
+
+puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// הגשת עמוד הבית
 app.use(express.static(__dirname));
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// נתיב הסריקה וההורדה
 app.get('/download', async (req, res) => {
     const targetUrl = req.query.url;
+    console.log(`\n[שיוך בקשה] מתחיל לסרוק במצב אופטימיזציית דפדפן מלאה: ${targetUrl}`);
+    
     if (!targetUrl) return res.status(400).send("Missing URL parameter");
 
+    let browser;
     try {
-        // 1. הורדת ה-HTML של עמוד הכנסת
-        const { data: html } = await axios.get(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0' }
+        console.log("[+] מפעיל דפדפן וירטואלי מוסווה ברקע...");
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox',
+                '--window-size=1920,1080',
+                '--disable-blink-features=AutomationControlled'
+            ]
         });
 
-        const $ = cheerio.load(html); // טעינת ה-HTML לסורק
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1920, height: 1080 });
 
-        // 2. חילוץ שם החוק עבור ה-ZIP
-        let lawName = "מסמכי_כנסת";
-        const headerText = $('.header-title').text().trim() || $('h1').text().trim();
-        if (headerText) lawName = headerText;
+        console.log("[+] ניגש לאתר הכנסת וממתין לטעינת העמוד...");
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 45000 });
 
-        const validExtensions = ['.doc', '.docx', '.pdf'];
-        const categories = [
-            { text: "מסמכי הצעת החוק", folderName: "מסמכי הצעת החוק" },
-            { text: "מסמכי החוק", folderName: "מסמכי החוק" },
-            { text: "דיונים בכנסת", folderName: "דיונים בכנסת" },
-            { text: "חומרי רקע", folderName: "חומרי רקע" }
-        ];
+        console.log("[+] ממתין 4 שניות נוספות לרינדור סופי של הטבלאות...");
+        await new Promise(resolve => setTimeout(resolve, 4000));
 
-        const zip = new JSZip();
-        let protocolCounter = 1;
-        let bgMaterialCounter = 1;
-        let currentBgDate = "";
-        let filesFoundCount = 0;
+        console.log("[+] מחלץ ומנקה את הנתונים ישירות מתוך הדפדפן החי...");
+        
+        // כאן קורה הקסם: אנחנו מריצים קוד בתוך הדפדפן שיודע לקרוא את ה-DOM בדיוק כמו התוסף
+        const linksToDownload = await page.evaluate((targetUrl) => {
+            const validExtensions = ['.doc', '.docx', '.pdf'];
+            const categories = [
+                { text: "מסמכי הצעת החוק", folderName: "מסמכי הצעת החוק" },
+                { text: "מסמכי החוק", folderName: "מסמכי החוק" },
+                { text: "דיונים בכנסת", folderName: "דיונים בכנסת" },
+                { text: "חומרי רקע", folderName: "חומרי רקע" }
+            ];
 
-        // מערך זמני לאיסוף הקישורים שנמצאו בסריקה
-        const linksToDownload = [];
+            const extractedLinks = [];
+            let protocolCounter = 1;
+            let bgMaterialCounter = 1;
 
-        // 3. סריקת כל הקישורים בעמוד (בדומה לתוסף)
-        $('a[href]').each((i, el) => {
-            const link = $(el);
-            const href = link.attr('href');
-            if (!href) return;
-
-            const absoluteUrl = href.startsWith('http') ? href : new URL(href, targetUrl).href;
-            const hrefLower = absoluteUrl.toLowerCase();
+            const allLinks = document.querySelectorAll('a[href]');
             
-            const hasValidExt = validExtensions.some(ext => hrefLower.endsWith(ext) || hrefLower.includes(ext + '?'));
-            if (!hasValidExt) return;
+            allLinks.forEach(link => {
+                const href = link.href;
+                const hrefLower = href.toLowerCase();
+                const hasValidExt = validExtensions.some(ext => hrefLower.endsWith(ext) || hrefLower.includes(ext + '?'));
+                if (!hasValidExt) return;
 
-            let linkText = link.text().trim();
-            if (linkText.includes("דפיברילטור בכנסת") || hrefLower.includes("defibrillator")) return;
+                let linkText = link.innerText ? link.innerText.trim() : "";
+                if (linkText.includes("דפיברילטור בכנסת") || hrefLower.includes("defibrillator")) return;
 
-            // זיהוי קטגוריה על ידי טיפוס למעלה באלמנטים (הדמיה של .closest בשרת)
-            let targetFolder = "מסמכים כלליים";
-            let parent = link.parent();
-            for (let depth = 0; depth < 7; depth++) {
-                if (!parent || parent.length === 0) break;
-                const parentText = parent.text() || "";
-                const matchCat = categories.find(cat => parentText.includes(cat.text));
-                if (matchCat) {
-                    targetFolder = matchCat.folderName;
-                    break;
+                // זיהוי קטגוריה
+                let targetFolder = "מסמכים כלליים";
+                let currentElement = link;
+                let foundCategory = null;
+
+                for (let i = 0; i < 9; i++) {
+                    if (!currentElement || currentElement === document.body) break;
+                    const textContent = currentElement.innerText || "";
+                    const matchCat = categories.find(cat => textContent.includes(cat.text));
+                    if (matchCat) {
+                        foundCategory = matchCat;
+                        break;
+                    }
+                    currentElement = currentElement.parentElement;
                 }
-                parent = parent.parent();
-            }
 
-            const row = link.closest('tr').length ? link.closest('tr') : link.parent();
-            let rowText = row.text().trim();
-
-            let cleanInfo = rowText
-                .replace(/הורד|פרוטוקול|צפייה|פתיחת קובץ|קובץ|לצפייה/gi, '')
-                .replace(/בשידור|שידור לא קיים/gi, '')
-                .replace(/דיונים בכנסת|דיוני הכנסת/gi, '')
-                .replace(/\n/g, ' - ')
-                .replace(/\s*-\s*-\s*/g, ' - ')
-                .replace(/-\s*-/g, ' - ')
-                .trim();
-
-            if (cleanInfo.startsWith('-')) cleanInfo = cleanInfo.substring(1).trim();
-            if (cleanInfo.endsWith('-')) cleanInfo = cleanInfo.substring(0, cleanInfo.length - 1).trim();
-
-            let finalName = "";
-
-            if (targetFolder === "דיונים בכנסת" || hrefLower.includes('protocol') || linkText.includes('פרוטוקול')) {
-                targetFolder = "דיונים בכנסת";
-                finalName = `פרוטוקול מספר ${protocolCounter} - ${cleanInfo}`;
-                protocolCounter++;
-            } else if (targetFolder === "חומרי רקע") {
-                const dateEl = row.find('[class*="doc-date"]').length ? row.find('[class*="doc-date"]') : row.closest('.ng-star-inserted').find('[class*="doc-date"]');
-                if (dateEl.length && dateEl.text().trim()) {
-                    currentBgDate = dateEl.text().trim().replace(/[\/.]/g, '.');
+                if (foundCategory) {
+                    targetFolder = foundCategory.folderName;
                 }
-                let cleanLinkText = linkText.replace(/הורד|צפייה|פתיחת קובץ|קובץ/gi, '').trim();
-                finalName = `חומר רקע מספר ${bgMaterialCounter} - ${cleanLinkText}`;
-                if (currentBgDate) finalName += ` - מיום ${currentBgDate}`;
-                bgMaterialCounter++;
-            } else {
-                finalName = linkText || cleanInfo;
-            }
 
-            if (!finalName || finalName.length < 5) {
-                finalName = absoluteUrl.substring(absoluteUrl.lastIndexOf('/') + 1).split('?')[0];
-            }
+                const row = link.closest('tr') || link.closest('.row') || link.closest('li') || link.parentElement;
+                // שימוש ב-innerText של הדפדפן שמביא רק את הטקסט הגלוי לעין ומסנן קוד נסתר!
+                let rowText = row ? (row.innerText || "") : linkText;
 
-            finalName = finalName.replace(/[\/\\:*?"<>|]/g, "_").replace(/\s+/g, ' ').trim();
-            if (finalName.length > 120) finalName = finalName.substring(0, 115);
+                let cleanInfo = rowText
+                    .replace(/הורד|פרוטוקול|צפייה|פתיחת קובץ|קובץ|לצפייה/gi, '')
+                    .replace(/בשידור|שידור לא קיים/gi, '')
+                    .replace(/דיונים בכנסת|דיוני הכנסת/gi, '')
+                    .replace(/\n/g, ' - ')
+                    .replace(/\s*-\s*-\s*/g, ' - ')
+                    .replace(/-\s*-/g, ' - ')
+                    .trim();
+                
+                if (cleanInfo.startsWith('-')) cleanInfo = cleanInfo.substring(1).trim();
+                if (cleanInfo.endsWith('-')) cleanInfo = cleanInfo.substring(0, cleanInfo.length - 1).trim();
 
-            const currentExt = validExtensions.find(ext => hrefLower.includes(ext)) || '.pdf';
-            if (!finalName.toLowerCase().endsWith(currentExt)) finalName += currentExt;
+                let finalName = "";
 
-            linksToDownload.push({ url: absoluteUrl, folder: targetFolder, filename: finalName });
+                if (targetFolder === "דיונים בכנסת" || hrefLower.includes('protocol') || linkText.includes('פרוטוקול')) {
+                    targetFolder = "דיונים בכנסת"; 
+                    finalName = `פרוטוקול מספר ${protocolCounter}`;
+                    if (cleanInfo) finalName += ` - ${cleanInfo}`;
+                    protocolCounter++;
+                } else if (targetFolder === "חומרי רקע") {
+                    let currentBgDate = "";
+                    if (row) {
+                        const dateEl = row.querySelector('[class*="doc-date"]') || 
+                                       row.closest('.ng-star-inserted')?.querySelector('[class*="doc-date"]');
+                        if (dateEl && dateEl.innerText.trim()) {
+                            currentBgDate = dateEl.innerText.trim().replace(/[\/.]/g, '.');
+                        }
+                    }
+                    let cleanLinkText = linkText.replace(/הורד|צפייה|פתיחת קובץ|קובץ/gi, '').trim();
+                    finalName = `חומר רקע מספר ${bgMaterialCounter} - ${cleanLinkText}`;
+                    if (currentBgDate) finalName += ` - מיום ${currentBgDate}`;
+                    bgMaterialCounter++;
+                } else {
+                    finalName = linkText || cleanInfo;
+                }
+
+                if (!finalName || finalName.length < 5) {
+                    finalName = href.substring(href.lastIndexOf('/') + 1).split('?')[0];
+                }
+
+                finalName = finalName.replace(/[\/\\:*?"<>|]/g, "_").replace(/\s+/g, ' ').trim();
+                if (finalName.length > 120) finalName = finalName.substring(0, 115);
+
+                const currentExt = validExtensions.find(ext => hrefLower.includes(ext)) || '.pdf';
+                if (!finalName.toLowerCase().endsWith(currentExt)) {
+                    finalName += currentExt;
+                }
+
+                extractedLinks.push({ url: href, folder: targetFolder, filename: finalName });
+            });
+
+            return extractedLinks;
+        }, targetUrl);
+
+        // חילוץ שם החוק מהעמוד לפני שסוגרים את הדפדפן
+        let lawName = "מסמכי_כנסת";
+        const retrievedLawName = await page.evaluate(() => {
+            const headerElement = document.querySelector('.header-title');
+            if (headerElement && headerElement.innerText.trim()) return headerElement.innerText.trim();
+            const h1Element = document.querySelector('h1');
+            if (h1Element) return h1Element.innerText.trim();
+            return null;
         });
+        if (retrievedLawName) lawName = retrievedLawName;
 
-        // 4. הורדת הקבצים עצמם לתוך ה-ZIP בשרת
+        await browser.close(); 
+        console.log(`[+] סריקת הדפדפן הסתיימה. נמצאו ${linksToDownload.length} קבצים להורדה.`);
+
+        if (linksToDownload.length === 0) {
+            return res.status(404).send("No files found on this page");
+        }
+
+        // שלב ההורדה של הקבצים לתוך ה-ZIP (נשאר בשרת)
+        const zip = new JSZip();
+        let filesFoundCount = 0;
+        
         for (const item of linksToDownload) {
             try {
-                const fileResponse = await axios.get(item.url, { responseType: 'arraybuffer' });
+                console.log(`[->] מוריד קובץ: ${item.filename}`);
+                const fileResponse = await axios.get(item.url, { responseType: 'arraybuffer', timeout: 15000 });
                 const buffer = Buffer.from(fileResponse.data, 'binary');
-                zip.file(`${item.folder}/${item.filename}`, buffer);
+                
+                // מניעת כפילויות שמות בתוך ה-ZIP
+                let finalFilename = item.filename;
+                let counter = 1;
+                let baseName = finalFilename.substring(0, finalFilename.lastIndexOf('.'));
+                const ext = finalFilename.substring(finalFilename.lastIndexOf('.'));
+                
+                while (zip.file(`${item.folder}/${finalFilename}`)) {
+                    finalFilename = `${baseName}_(${counter})${ext}`;
+                    counter++;
+                }
+
+                zip.file(`${item.folder}/${finalFilename}`, buffer);
                 filesFoundCount++;
             } catch (err) {
-                console.error(`Failed to download file: ${item.url}`);
+                console.log(`[!] נכשלה הורדת הקובץ: ${item.filename} (${err.message})`);
             }
         }
 
-        if (filesFoundCount === 0) return res.status(404).send("No files found");
+        if (filesFoundCount === 0) return res.status(404).send("Could not download files");
 
-        // 5. יצירת ה-ZIP ושליחתו כקובץ להורדה בדפדפן
+        console.log("[+] מייצר קובץ ZIP סופי...");
         const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
         
         const safeZipName = encodeURIComponent(lawName.replace(/[\/\\:*?"<>|]/g, "_") + ".zip");
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="${safeZipName}"`);
         res.send(zipBuffer);
+        console.log("[V] ה-ZIP נשלח בהצלחה למשתמש!");
 
     } catch (error) {
-        console.error(error);
+        console.log("\n[❌ שגיאה קריטית קריסה ❌]");
+        console.error(error.message);
+        if (browser) await browser.close();
         res.status(500).send("Error processing request");
     }
 });
