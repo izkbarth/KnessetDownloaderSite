@@ -25,9 +25,11 @@ app.get('/download', async (req, res) => {
 
     let browser;
     try {
-        console.log("[+] מפעיל דפדפן וירטואלי מוסווה ברקע...");
+ console.log("[+] מפעיל דפדפן וירטואלי מוסווה ברקע...");
         browser = await puppeteer.launch({
             headless: "new",
+            // הנתיב הזה הוא סטנדרטי עבור הדפדפן שמגיע מובנה ב-Dockerfile של puppeteer
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
