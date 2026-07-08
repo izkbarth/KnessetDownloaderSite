@@ -24,7 +24,7 @@ app.get('/download', async (req, res) => {
         console.log("[+] טוען את פאפטיר ומצב הסוואה באופן דינמי...");
         
         // טעינה דינמית תקינה לחלוטין
-        const { puppeteer } = require('puppeteer-extra');
+             const puppeteer = require('puppeteer-extra');
         const StealthPlugin = require('puppeteer-extra-plugin-stealth');
         
         // פשוט מפעילים את הפלאגין ישירות ללא בדיקות מורכבות
@@ -33,7 +33,6 @@ app.get('/download', async (req, res) => {
         console.log("[+] מפעיל דפדפן וירטואלי מובנה של גוגל...");
         browser = await puppeteer.launch({
             headless: "new", 
-            executablePath: '/usr/bin/google-chrome', 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
