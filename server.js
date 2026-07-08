@@ -19,38 +19,51 @@ app.get('/', (req, res) => {
 
 app.get('/download', async (req, res) => {
     const targetUrl = req.query.url;
-    console.log(`\n[שיוך בקשה] מתחיל לסרוק במצב אופטימיזציית דפדפן מלאה: ${targetUrl}`);
+    console.log(`\n[שיוך בקשה] מתחיל לסרוק במצב אופטימיזציית ענן מלאה: ${targetUrl}`);
     
     if (!targetUrl) return res.status(400).send("Missing URL parameter");
 
     let browser;
     try {
- console.log("[+] מפעיל דפדפן וירטואלי מוסווה ברקע...");
+        console.log("[+] מפעיל דפדפן וירטואלי חסכוני בזיכרון (Cloud Mode)...");
         browser = await puppeteer.launch({
-            headless: "new",
-            // הנתיב הזה הוא סטנדרטי עבור הדפדפן שמגיע מובנה ב-Dockerfile של puppeteer
+            // שינוי קריטי עבור Render - שימוש ב-shell הקל ביותר
+            headless: "shell", 
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
-                '--window-size=1920,1080',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-dev-shm-usage', // מעביר את הזיכרון ל-RAM רגיל במקום תיקיית שיתוף זמנית
+                '--disable-gpu', // מכבה האצת גרפיקה כדי לחסוך המון זיכרון
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process', // מריץ את כרום בתהליך בודד (חוסך RAM בשרתים חלשים)
+                '--disable-extensions',
+                '--window-size=1920,1080'
             ]
         });
 
         const page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
+        
+        // חסימת טעינת תמונות ועיצובים (CSS) כדי להאיץ את הטעינה ב-Render ולמנוע קריסות
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
 
         console.log("[+] ניגש לאתר הכנסת וממתין לטעינת העמוד...");
-        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 45000 });
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 60000 });
 
-        console.log("[+] ממתין 4 שניות נוספות לרינדור סופי של הטבלאות...");
+        console.log("[+] ממתין 4 שניות נוספות לרינדור סופי...");
         await new Promise(resolve => setTimeout(resolve, 4000));
 
-        console.log("[+] מחלץ ומנקה את הנתונים ישירות מתוך הדפדפן החי...");
-        
-        // כאן קורה הקסם: אנחנו מריצים קוד בתוך הדפדפן שיודע לקרוא את ה-DOM בדיוק כמו התוסף
-        const linksToDownload = await page.evaluate((targetUrl) => {
+        console.log("[+] מחלץ את הנתונים ישירות מתוך הדפדפן...");
+        const linksToDownload = await page.evaluate(() => {
             const validExtensions = ['.doc', '.docx', '.pdf'];
             const categories = [
                 { text: "מסמכי הצעת החוק", folderName: "מסמכי הצעת החוק" },
@@ -74,7 +87,6 @@ app.get('/download', async (req, res) => {
                 let linkText = link.innerText ? link.innerText.trim() : "";
                 if (linkText.includes("דפיברילטור בכנסת") || hrefLower.includes("defibrillator")) return;
 
-                // זיהוי קטגוריה
                 let targetFolder = "מסמכים כלליים";
                 let currentElement = link;
                 let foundCategory = null;
@@ -95,7 +107,6 @@ app.get('/download', async (req, res) => {
                 }
 
                 const row = link.closest('tr') || link.closest('.row') || link.closest('li') || link.parentElement;
-                // שימוש ב-innerText של הדפדפן שמביא רק את הטקסט הגלוי לעין ומסנן קוד נסתר!
                 let rowText = row ? (row.innerText || "") : linkText;
 
                 let cleanInfo = rowText
@@ -150,9 +161,8 @@ app.get('/download', async (req, res) => {
             });
 
             return extractedLinks;
-        }, targetUrl);
+        });
 
-        // חילוץ שם החוק מהעמוד לפני שסוגרים את הדפדפן
         let lawName = "מסמכי_כנסת";
         const retrievedLawName = await page.evaluate(() => {
             const headerElement = document.querySelector('.header-title');
@@ -164,13 +174,12 @@ app.get('/download', async (req, res) => {
         if (retrievedLawName) lawName = retrievedLawName;
 
         await browser.close(); 
-        console.log(`[+] סריקת הדפדפן הסתיימה. נמצאו ${linksToDownload.length} קבצים להורדה.`);
+        console.log(`[+] סריקת הדפדפן הסתיימה. נמצאו ${linksToDownload.length} קבצים.`);
 
         if (linksToDownload.length === 0) {
             return res.status(404).send("No files found on this page");
         }
 
-        // שלב ההורדה של הקבצים לתוך ה-ZIP (נשאר בשרת)
         const zip = new JSZip();
         let filesFoundCount = 0;
         
@@ -180,7 +189,6 @@ app.get('/download', async (req, res) => {
                 const fileResponse = await axios.get(item.url, { responseType: 'arraybuffer', timeout: 15000 });
                 const buffer = Buffer.from(fileResponse.data, 'binary');
                 
-                // מניעת כפילויות שמות בתוך ה-ZIP
                 let finalFilename = item.filename;
                 let counter = 1;
                 let baseName = finalFilename.substring(0, finalFilename.lastIndexOf('.'));
@@ -207,14 +215,15 @@ app.get('/download', async (req, res) => {
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="${safeZipName}"`);
         res.send(zipBuffer);
-        console.log("[V] ה-ZIP נשלח בהצלחה למשתמש!");
+        console.log("[V] ה-ZIP נשלח בהצלחה!");
 
-    } catch (error) {
-        console.log("\n[❌ שגיאה קריטית קריסה ❌]");
+} catch (error) {
+        console.log("\n[❌ שגיאה קריטית בענן ❌]");
         console.error(error.message);
         if (browser) await browser.close();
-        res.status(500).send("Error processing request");
+        
+        // כאן אנחנו שולחים את השגיאה האמיתית לדפדפן במקום טקסט כללי
+        res.status(500).send(`שגיאת שרת פנימית: ${error.message}`);
     }
-});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

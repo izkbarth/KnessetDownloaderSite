@@ -21,7 +21,7 @@
     <button id="processBtn">הורד חבילת מסמכים (ZIP)</button>
     <div id="status"></div>
 
-    <script>
+<script>
         document.getElementById('processBtn').addEventListener('click', async () => {
             const urlInput = document.getElementById('billUrl').value.trim();
             const statusDiv = document.getElementById('status');
@@ -33,12 +33,16 @@
             }
 
             btn.disabled = true;
-            statusDiv.innerText = "השרת סורק את עמוד הכנסת ומכין את קובץ ה-ZIP. זה עשוי לקחת חצי דקה...";
+            statusDiv.innerText = "השרת סורק את עמוד הכנסת ומכין את ה-ZIP. זה עשוי לקחת חצי דקה...";
 
             try {
                 const response = await fetch(`/download?url=${encodeURIComponent(urlInput)}`);
                 
-                if (!response.ok) throw new Error("השרת נתקל בשגיאה בעיבוד העמוד");
+                // אם השרת החזיר שגיאה (סטטוס 500 או 404), נקרא את טקסט השגיאה שהוא שלח
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || "השרת נתקל בשגיאה בעיבוד העמוד");
+                }
 
                 const disposition = response.headers.get('Content-Disposition');
                 let filename = "מסמכי_כנסת.zip";
@@ -57,7 +61,8 @@
 
                 statusDiv.innerHTML = "<span style='color:green;'>הקובץ הורד בהצלחה!</span>";
             } catch (err) {
-                statusDiv.innerHTML = `<span style='color:red;'>שגיאה: ${err.message}</span>`;
+                // הצגת השגיאה המפורטת על המסך
+                statusDiv.innerHTML = `<span style='color:red; font-weight:bold;'>שגיאה: ${err.message}</span>`;
             } finally {
                 btn.disabled = false;
             }
