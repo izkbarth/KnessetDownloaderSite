@@ -1,12 +1,8 @@
 const express = require('express');
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const cheerio = require('cheerio');
 const JSZip = require('jszip');
 const axios = require('axios');
 const path = require('path');
-
-puppeteer.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,10 +21,22 @@ app.get('/download', async (req, res) => {
 
     let browser;
     try {
-        console.log("[+] מפעיל דפדפן וירטואלי חסכוני בזיכרון (Cloud Mode)...");
+        console.log("[+] טוען את פאפטיר ומצב הסוואה באופן דינמי לעקיפת התנגשות גרסאות...");
+        
+        // טעינה דינמית חכמה שפותרת את שגיאת ה-Require של השרת
+        const { puppeteer } = require('puppeteer-extra');
+        const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+        
+        // הפעלת ה-Stealth פעם אחת בלבד בתוך הריצה
+        if (puppeteer.globalPlugins && puppeteer.globalPlugins.length === 0) {
+            puppeteer.use(StealthPlugin());
+        }
+
+        console.log("[+] מפעיל דפדפן וירטואלי מובנה של גוגל...");
         browser = await puppeteer.launch({
-            headless: "shell", 
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            headless: "new", 
+            // נתיב קבוע ורשמי שעובד תמיד בתוך ה-Dockerfile של גוגל
+            executablePath: '/usr/bin/google-chrome', 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
