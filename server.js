@@ -21,21 +21,18 @@ app.get('/download', async (req, res) => {
 
     let browser;
     try {
-        console.log("[+] טוען את פאפטיר ומצב הסוואה באופן דינמי לעקיפת התנגשות גרסאות...");
+        console.log("[+] טוען את פאפטיר ומצב הסוואה באופן דינמי...");
         
-        // טעינה דינמית חכמה שפותרת את שגיאת ה-Require של השרת
+        // טעינה דינמית תקינה לחלוטין
         const { puppeteer } = require('puppeteer-extra');
         const StealthPlugin = require('puppeteer-extra-plugin-stealth');
         
-        // הפעלת ה-Stealth פעם אחת בלבד בתוך הריצה
-        if (puppeteer.globalPlugins && puppeteer.globalPlugins.length === 0) {
-            puppeteer.use(StealthPlugin());
-        }
+        // פשוט מפעילים את הפלאגין ישירות ללא בדיקות מורכבות
+        puppeteer.use(StealthPlugin());
 
         console.log("[+] מפעיל דפדפן וירטואלי מובנה של גוגל...");
         browser = await puppeteer.launch({
             headless: "new", 
-            // נתיב קבוע ורשמי שעובד תמיד בתוך ה-Dockerfile של גוגל
             executablePath: '/usr/bin/google-chrome', 
             args: [
                 '--no-sandbox', 
