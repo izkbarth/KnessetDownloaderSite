@@ -27,17 +27,16 @@ app.get('/download', async (req, res) => {
     try {
         console.log("[+] מפעיל דפדפן וירטואלי חסכוני בזיכרון (Cloud Mode)...");
         browser = await puppeteer.launch({
-            // שינוי קריטי עבור Render - שימוש ב-shell הקל ביותר
             headless: "shell", 
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage', // מעביר את הזיכרון ל-RAM רגיל במקום תיקיית שיתוף זמנית
-                '--disable-gpu', // מכבה האצת גרפיקה כדי לחסוך המון זיכרון
+                '--disable-dev-shm-usage', 
+                '--disable-gpu', 
                 '--no-first-run',
                 '--no-zygote',
-                '--single-process', // מריץ את כרום בתהליך בודד (חוסך RAM בשרתים חלשים)
+                '--single-process', 
                 '--disable-extensions',
                 '--window-size=1920,1080'
             ]
@@ -46,7 +45,6 @@ app.get('/download', async (req, res) => {
         const page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
         
-        // חסימת טעינת תמונות ועיצובים (CSS) כדי להאיץ את הטעינה ב-Render ולמנוע קריסות
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
@@ -217,13 +215,12 @@ app.get('/download', async (req, res) => {
         res.send(zipBuffer);
         console.log("[V] ה-ZIP נשלח בהצלחה!");
 
-} catch (error) {
+    } catch (error) {
         console.log("\n[❌ שגיאה קריטית בענן ❌]");
         console.error(error.message);
         if (browser) await browser.close();
-        
-        // כאן אנחנו שולחים את השגיאה האמיתית לדפדפן במקום טקסט כללי
         res.status(500).send(`שגיאת שרת פנימית: ${error.message}`);
     }
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
